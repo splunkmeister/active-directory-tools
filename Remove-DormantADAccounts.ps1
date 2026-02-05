@@ -35,6 +35,9 @@
 .PARAMETER Force
     Override the MaxAccounts safety limit and allow execution mode for large batches.
 
+.PARAMETER Help
+    Display help information.
+
 .PARAMETER WhatIf
     Preview actions without making changes.
 
@@ -54,7 +57,7 @@
     .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com" -MaxAccounts 100 -Force
 #>
 
-[CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Default')]
+[CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Help')]
 param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Default')]
     [ValidateNotNullOrEmpty()]
@@ -90,10 +93,21 @@ param(
 
     # Override for MaxAccounts safety limit
     [Parameter(Mandatory = $false)]
-    [switch]$Force
+    [switch]$Force,
+
+    # Show help information
+    [Parameter(ParameterSetName = 'Help')]
+    [Alias('h', '?')]
+    [switch]$Help
 )
 
 #Requires -Modules ActiveDirectory
+
+# Show help if no arguments provided or -Help specified
+if ($PSCmdlet.ParameterSetName -eq 'Help' -or $Help) {
+    Get-Help $PSCommandPath -Detailed
+    exit 0
+}
 
 # ============================================================================
 # Circuit Breaker Functions

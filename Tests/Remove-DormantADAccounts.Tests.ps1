@@ -30,6 +30,28 @@ AfterAll {
     }
 }
 
+Describe "Help Flag" {
+    It "Should display help when run with -Help" {
+        $result = & $ScriptPath -Help 2>&1
+        $result | Should -Match "SYNOPSIS"
+    }
+
+    It "Should display help when run with -h alias" {
+        $result = & $ScriptPath -h 2>&1
+        $result | Should -Match "SYNOPSIS"
+    }
+
+    It "Should display help when run without arguments" {
+        $result = & $ScriptPath 2>&1
+        $result | Should -Match "SYNOPSIS"
+    }
+
+    It "Should exit with code 0 when showing help" {
+        & $ScriptPath -Help | Out-Null
+        $LASTEXITCODE | Should -Be 0
+    }
+}
+
 Describe "Get-AccountDormancyStatus Function" {
     BeforeAll {
         # Dot-source just the function for isolated testing
