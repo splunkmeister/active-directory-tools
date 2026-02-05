@@ -39,10 +39,10 @@
     Preview actions without making changes.
 
 .EXAMPLE
-    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -WhatIf
+    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com" -WhatIf
 
 .EXAMPLE
-    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com"
+    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com"
 
 .EXAMPLE
     .\Remove-DormantADAccounts.ps1 -Rollback -RollbackFile "DormantAccountReport_20240115_120000.csv" -WhatIf
@@ -51,7 +51,7 @@
     .\Remove-DormantADAccounts.ps1 -Rollback -RollbackFile "DormantAccountReport_20240115_120000.csv"
 
 .EXAMPLE
-    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -MaxAccounts 100 -Force
+    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com" -MaxAccounts 100 -Force
 #>
 
 [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Default')]
