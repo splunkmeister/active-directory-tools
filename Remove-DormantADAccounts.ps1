@@ -105,7 +105,49 @@ param(
 
 # Show help if no arguments provided or -Help specified
 if ($PSCmdlet.ParameterSetName -eq 'Help' -or $Help) {
-    Get-Help $PSCommandPath -Detailed
+    $helpText = @"
+Remove-DormantADAccounts.ps1
+
+SYNOPSIS
+    Processes a list of AD accounts, validates dormancy, and disables/moves confirmed dormant accounts.
+
+DESCRIPTION
+    This script reads a list of account names from a text file, checks each account's
+    lastLogonTimestamp to determine dormancy status, and optionally disables and moves
+    dormant accounts to a designated OU. Also supports rollback from a previous run's report.
+
+PARAMETERS
+    -InputFile <string>        Path to text file with account names (one per line)
+    -DormantDays <int>         Days of inactivity to consider an account dormant
+    -TargetOU <string>         Distinguished Name of OU to move disabled accounts to
+    -ReportPath <string>       Path for CSV report output (optional)
+    -Rollback                  Enable rollback mode
+    -RollbackFile <string>     Path to previous run's CSV report for rollback
+    -MaxAccounts <int>         Max accounts before requiring -Force (default: 50)
+    -MaxConsecutiveFailures    Stop after N consecutive failures (default: 5)
+    -Force                     Override MaxAccounts safety limit
+    -WhatIf                    Preview actions without making changes
+    -Help, -h, -?              Display this help message
+
+EXAMPLES
+    # Preview dormant account cleanup
+    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -WhatIf
+
+    # Execute cleanup
+    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com"
+
+    # Rollback previous run
+    .\Remove-DormantADAccounts.ps1 -Rollback -RollbackFile "DormantAccountReport_20240115_120000.csv"
+
+    # Large batch with force
+    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -MaxAccounts 100 -Force
+
+CIRCUIT BREAKERS
+    - DC Health Check: Verifies AD connectivity before processing
+    - MaxAccounts Limit: Forces WhatIf mode for large batches unless -Force specified
+    - Consecutive Failures: Stops after repeated errors to catch systemic issues
+"@
+    Write-Host $helpText
     exit 0
 }
 
