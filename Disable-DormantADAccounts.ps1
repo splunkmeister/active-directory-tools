@@ -42,19 +42,19 @@
     Preview actions without making changes.
 
 .EXAMPLE
-    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com" -WhatIf
+    .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com" -WhatIf
 
 .EXAMPLE
-    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com"
+    .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com"
 
 .EXAMPLE
-    .\Remove-DormantADAccounts.ps1 -Rollback -RollbackFile "DormantAccountReport_20240115_120000.csv" -WhatIf
+    .\Disable-DormantADAccounts.ps1 -Rollback -RollbackFile "DormantAccountReport_20240115_120000.csv" -WhatIf
 
 .EXAMPLE
-    .\Remove-DormantADAccounts.ps1 -Rollback -RollbackFile "DormantAccountReport_20240115_120000.csv"
+    .\Disable-DormantADAccounts.ps1 -Rollback -RollbackFile "DormantAccountReport_20240115_120000.csv"
 
 .EXAMPLE
-    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com" -MaxAccounts 100 -Force
+    .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com" -MaxAccounts 100 -Force
 #>
 
 [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Help')]
@@ -106,7 +106,7 @@ param(
 # Show help if no arguments provided or -Help specified
 if ($PSCmdlet.ParameterSetName -eq 'Help' -or $Help) {
     $helpText = @"
-Remove-DormantADAccounts.ps1
+Disable-DormantADAccounts.ps1
 
 SYNOPSIS
     Processes a list of AD accounts, validates dormancy, and disables/moves confirmed dormant accounts.
@@ -131,16 +131,16 @@ PARAMETERS
 
 EXAMPLES
     # Preview dormant account cleanup
-    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -WhatIf
+    .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -WhatIf
 
     # Execute cleanup
-    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com"
+    .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com"
 
     # Rollback previous run
-    .\Remove-DormantADAccounts.ps1 -Rollback -RollbackFile "DormantAccountReport_20240115_120000.csv"
+    .\Disable-DormantADAccounts.ps1 -Rollback -RollbackFile "DormantAccountReport_20240115_120000.csv"
 
     # Large batch with force
-    .\Remove-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -MaxAccounts 100 -Force
+    .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -MaxAccounts 100 -Force
 
 CIRCUIT BREAKERS
     - DC Health Check: Verifies AD connectivity before processing

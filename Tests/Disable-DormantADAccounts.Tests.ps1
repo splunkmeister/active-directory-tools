@@ -2,7 +2,7 @@
 
 <#
 .SYNOPSIS
-    Pester tests for Remove-DormantADAccounts.ps1
+    Pester tests for Disable-DormantADAccounts.ps1
 .DESCRIPTION
     Unit tests with mocked Active Directory cmdlets.
     Run with: Invoke-Pester -Path ./Tests/
@@ -10,7 +10,7 @@
 
 BeforeAll {
     # Get the script path
-    $ScriptPath = Join-Path -Path $PSScriptRoot -ChildPath "..\Remove-DormantADAccounts.ps1"
+    $ScriptPath = Join-Path -Path $PSScriptRoot -ChildPath "..\Disable-DormantADAccounts.ps1"
 
     # Create a temp directory for test files
     $script:TestDir = Join-Path -Path $env:TEMP -ChildPath "ADDormantTests_$(Get-Random)"

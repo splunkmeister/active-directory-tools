@@ -1,122 +1,116 @@
 # Active Directory Tools
 
-A collection of PowerShell scripts for Active Directory management.
+PowerShell scripts for Active Directory dormant account management.
 
-## Remove-DormantADAccounts
+## Scripts
 
-PowerShell script to identify, disable, and move dormant Active Directory accounts with built-in safety controls and rollback capability.
+| Script | Purpose |
+|--------|---------|
+| `Find-DormantADAccounts.ps1` | Query AD to discover dormant accounts |
+| `Disable-DormantADAccounts.ps1` | Disable and move dormant accounts to a target OU |
 
-### Features
+## Requirements
 
-- Identify dormant accounts based on `lastLogonTimestamp`
-- Disable and move accounts to a designated OU
-- Rollback capability to restore previously disabled accounts
-- Circuit breakers to prevent accidental mass changes
-- Detailed CSV reporting
-- WhatIf support for dry runs
-
-### Requirements
-
-- PowerShell 5.1 or later
+- PowerShell 5.1+
 - Active Directory PowerShell module
-- Appropriate AD permissions (disable accounts, move objects)
+- Appropriate AD permissions
+
+## Find-DormantADAccounts.ps1
+
+Queries AD for dormant user accounts based on `lastLogonTimestamp`. Generates reports and can create input files for the Disable script.
 
 ### Parameters
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `-InputFile` | Yes* | - | Path to text file with account names (one per line) |
-| `-DormantDays` | Yes* | - | Days of inactivity to consider an account dormant |
-| `-TargetOU` | Yes* | - | Distinguished Name of OU to move disabled accounts to |
-| `-ReportPath` | No | Auto-generated | Path for CSV report output |
-| `-Rollback` | Yes** | - | Enable rollback mode |
-| `-RollbackFile` | Yes** | - | Path to previous run's CSV report for rollback |
-| `-MaxAccounts` | No | 50 | Max accounts before requiring `-Force` |
-| `-MaxConsecutiveFailures` | No | 5 | Stop after N consecutive failures |
-| `-Force` | No | - | Override MaxAccounts safety limit |
-| `-WhatIf` | No | - | Preview actions without making changes |
-
-\* Required for default mode
-\** Required for rollback mode
+| `-SearchBase` | Yes | - | OU distinguished name to search |
+| `-DormantDays` | Yes | - | Days of inactivity threshold |
+| `-OutputFile` | No | - | Path to generate target file (SamAccountNames only) |
+| `-ReportPath` | No | Auto | Path for full CSV report |
+| `-IncludeNeverLoggedIn` | No | $false | Include accounts that never logged in |
 
 ### Usage
 
-#### Basic Usage
-
-Preview what would happen (dry run):
 ```powershell
-.\Remove-DormantADAccounts.ps1 `
-    -InputFile "accounts.txt" `
-    -DormantDays 90 `
-    -TargetOU "OU=Disabled Users,DC=contoso,DC=com" `
-    -WhatIf
+# Find dormant accounts
+.\Find-DormantADAccounts.ps1 -SearchBase "OU=Users,DC=contoso,DC=com" -DormantDays 90
+
+# Generate target file for Disable script
+.\Find-DormantADAccounts.ps1 -SearchBase "OU=Users,DC=contoso,DC=com" -DormantDays 90 -OutputFile "targets.txt"
+
+# Include never-logged-in accounts
+.\Find-DormantADAccounts.ps1 -SearchBase "OU=Users,DC=contoso,DC=com" -DormantDays 90 -IncludeNeverLoggedIn
 ```
 
-Execute the cleanup:
+## Disable-DormantADAccounts.ps1
+
+Processes a list of accounts, validates dormancy, and disables/moves confirmed dormant accounts. Includes rollback capability.
+
+### Parameters
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `-InputFile` | Yes* | - | Path to text file with account names |
+| `-DormantDays` | Yes* | - | Days of inactivity threshold |
+| `-TargetOU` | Yes* | - | DN of OU to move disabled accounts to |
+| `-ReportPath` | No | Auto | Path for CSV report |
+| `-Rollback` | Yes** | - | Enable rollback mode |
+| `-RollbackFile` | Yes** | - | Previous run's CSV report for rollback |
+| `-MaxAccounts` | No | 50 | Max accounts before requiring `-Force` |
+| `-MaxConsecutiveFailures` | No | 5 | Stop after N consecutive failures |
+| `-Force` | No | - | Override MaxAccounts limit |
+| `-WhatIf` | No | - | Preview without changes |
+
+\* Required for default mode | \** Required for rollback mode
+
+### Usage
+
 ```powershell
-.\Remove-DormantADAccounts.ps1 `
-    -InputFile "accounts.txt" `
-    -DormantDays 90 `
-    -TargetOU "OU=Disabled Users,DC=contoso,DC=com"
+# Preview (dry run)
+.\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -WhatIf
+
+# Execute
+.\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com"
+
+# Rollback
+.\Disable-DormantADAccounts.ps1 -Rollback -RollbackFile "DormantAccountReport_20240115_120000.csv"
+
+# Large batch
+.\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -Force
 ```
 
-#### Large Batch Processing
+## Workflow Example
 
-For batches exceeding the default limit (50 accounts), use `-Force`:
 ```powershell
-.\Remove-DormantADAccounts.ps1 `
-    -InputFile "large_batch.txt" `
-    -DormantDays 90 `
-    -TargetOU "OU=Disabled Users,DC=contoso,DC=com" `
-    -MaxAccounts 200 `
-    -Force
+# 1. Discover dormant accounts and generate target file
+.\Find-DormantADAccounts.ps1 -SearchBase "OU=Users,DC=contoso,DC=com" -DormantDays 90 -OutputFile "targets.txt"
+
+# 2. Review the discovery report (DormantAccountDiscovery_*.csv)
+
+# 3. Preview what will be disabled
+.\Disable-DormantADAccounts.ps1 -InputFile "targets.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -WhatIf
+
+# 4. Execute the cleanup
+.\Disable-DormantADAccounts.ps1 -InputFile "targets.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com"
+
+# 5. Keep DormantAccountReport_*.csv for rollback if needed
 ```
 
-#### Rollback
+## Circuit Breakers
 
-Restore accounts from a previous run:
+The Disable script includes safety mechanisms:
+
+- **DC Health Check**: Verifies AD connectivity before processing
+- **MaxAccounts Limit**: Forces WhatIf mode for large batches (override with `-Force`)
+- **Consecutive Failures**: Stops after N consecutive errors (default: 5)
+
+## Testing
+
 ```powershell
-# Preview rollback
-.\Remove-DormantADAccounts.ps1 `
-    -Rollback `
-    -RollbackFile "DormantAccountReport_20240115_120000.csv" `
-    -WhatIf
-
-# Execute rollback
-.\Remove-DormantADAccounts.ps1 `
-    -Rollback `
-    -RollbackFile "DormantAccountReport_20240115_120000.csv"
+Invoke-Pester -Path ./Tests/
 ```
 
-### Circuit Breakers
-
-The script includes safety mechanisms to prevent unintended mass changes:
-
-#### 1. Domain Controller Health Check
-Verifies AD connectivity before processing. Exits with error if unreachable.
-
-#### 2. MaxAccounts Limit
-If account count exceeds the limit (default: 50), the script automatically switches to WhatIf mode. Override with `-Force` to proceed with execution.
-
-#### 3. Consecutive Failure Limit
-Processing stops after N consecutive failures (default: 5). This catches systemic issues like permission problems or DC connectivity loss. The counter resets on any successful operation.
-
-### Reports
-
-#### Dormant Account Report
-Generated during normal operation with columns:
-- `SamAccountName`, `DisplayName`, `LastLogonDate`, `DaysInactive`
-- `Status` (ACTIVE, DORMANT, NEVER_LOGGED_IN, NOT_FOUND)
-- `Action` (SKIPPED, WHATIF, DISABLED_AND_MOVED, ERROR)
-- `OriginalOU`, `NewOU`, `Timestamp`
-
-#### Rollback Report
-Generated during rollback with columns:
-- `SamAccountName`, `OriginalOU`, `RestoredFrom`
-- `Action` (RESTORED, WHATIF, NOT_FOUND, ERROR)
-- `Timestamp`
-
-### Input File Format
+## Input File Format
 
 Simple text file with one account name per line:
 ```
@@ -124,33 +118,3 @@ jsmith
 mjohnson
 agarcia
 ```
-
-### Testing
-
-Run Pester tests:
-```powershell
-Invoke-Pester -Path ./Tests/
-```
-
-### Example Workflow
-
-1. **Generate account list** from your identity management system or AD query
-
-2. **Preview changes** with WhatIf:
-   ```powershell
-   .\Remove-DormantADAccounts.ps1 -InputFile accounts.txt -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -WhatIf
-   ```
-
-3. **Review the report** to verify accounts targeted
-
-4. **Execute the cleanup**:
-   ```powershell
-   .\Remove-DormantADAccounts.ps1 -InputFile accounts.txt -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com"
-   ```
-
-5. **Keep the report** - it's required for rollback if needed
-
-6. **Rollback if necessary**:
-   ```powershell
-   .\Remove-DormantADAccounts.ps1 -Rollback -RollbackFile "DormantAccountReport_20240115_120000.csv"
-   ```
