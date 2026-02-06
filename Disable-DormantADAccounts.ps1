@@ -35,6 +35,10 @@
 .PARAMETER Force
     Override the MaxAccounts safety limit and allow execution mode for large batches.
 
+.PARAMETER TestPermissions
+    Test if the current user has sufficient AD permissions to disable accounts and move them
+    to the target OU. Validates permissions using a sample account from the input file and exits.
+
 .PARAMETER Help
     Display help information.
 
@@ -55,6 +59,9 @@
 
 .EXAMPLE
     .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com" -MaxAccounts 100 -Force
+
+.EXAMPLE
+    .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com" -TestPermissions
 #>
 
 [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Help')]
@@ -95,6 +102,10 @@ param(
     [Parameter(Mandatory = $false)]
     [switch]$Force,
 
+    # Test AD permissions before processing
+    [Parameter(Mandatory = $false, ParameterSetName = 'Default')]
+    [switch]$TestPermissions,
+
     # Show help information
     [Parameter(ParameterSetName = 'Help')]
     [Alias('h', '?')]
@@ -126,6 +137,7 @@ PARAMETERS
     -MaxAccounts <int>         Max accounts before requiring -Force (default: 50)
     -MaxConsecutiveFailures    Stop after N consecutive failures (default: 5)
     -Force                     Override MaxAccounts safety limit
+    -TestPermissions           Test AD permissions before processing and exit
     -WhatIf                    Preview actions without making changes
     -Help, -h, -?              Display this help message
 
@@ -141,6 +153,9 @@ EXAMPLES
 
     # Large batch with force
     .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -MaxAccounts 100 -Force
+
+    # Test permissions before processing
+    .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -TestPermissions
 
 CIRCUIT BREAKERS
     - DC Health Check: Verifies AD connectivity before processing
@@ -171,6 +186,104 @@ function Test-DomainControllerHealth {
     catch {
         return $false
     }
+}
+
+function Test-ADWritePermission {
+    <#
+    .SYNOPSIS
+        Tests if the current user has permissions to disable accounts and move them to the target OU.
+    .DESCRIPTION
+        Checks ACLs on the sample user object and target OU to verify the current user
+        has WriteProperty access (to disable) and CreateChild access (to move objects).
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$UserDN,
+
+        [Parameter(Mandatory = $true)]
+        [string]$TargetOU
+    )
+
+    $result = [PSCustomObject]@{
+        CanModifyUser = $false
+        CanMoveToOU   = $false
+        UserDetails   = $null
+        OUDetails     = $null
+    }
+
+    try {
+        # Get current user's identity and group memberships
+        $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $currentPrincipal = New-Object System.Security.Principal.WindowsPrincipal($currentIdentity)
+
+        # Build list of SIDs to check (user + all groups)
+        $userSids = @($currentIdentity.User)
+        $userSids += $currentIdentity.Groups | ForEach-Object { $_ }
+
+        # Check write permission on user object
+        try {
+            $userAcl = Get-Acl -Path "AD:\$UserDN" -ErrorAction Stop
+            foreach ($ace in $userAcl.Access) {
+                $aceSid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier])
+                if ($userSids -contains $aceSid) {
+                    # Check for WriteProperty or GenericAll
+                    if ($ace.AccessControlType -eq 'Allow') {
+                        if ($ace.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::GenericAll) {
+                            $result.CanModifyUser = $true
+                            $result.UserDetails = "GenericAll permission granted"
+                            break
+                        }
+                        if ($ace.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::WriteProperty) {
+                            $result.CanModifyUser = $true
+                            $result.UserDetails = "WriteProperty permission granted"
+                            break
+                        }
+                    }
+                }
+            }
+            if (-not $result.CanModifyUser) {
+                $result.UserDetails = "Missing WriteProperty permission on user object"
+            }
+        }
+        catch {
+            $result.UserDetails = "Unable to read ACL on user object: $_"
+        }
+
+        # Check CreateChild permission on target OU
+        try {
+            $ouAcl = Get-Acl -Path "AD:\$TargetOU" -ErrorAction Stop
+            foreach ($ace in $ouAcl.Access) {
+                $aceSid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier])
+                if ($userSids -contains $aceSid) {
+                    # Check for CreateChild or GenericAll
+                    if ($ace.AccessControlType -eq 'Allow') {
+                        if ($ace.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::GenericAll) {
+                            $result.CanMoveToOU = $true
+                            $result.OUDetails = "GenericAll permission granted"
+                            break
+                        }
+                        if ($ace.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::CreateChild) {
+                            $result.CanMoveToOU = $true
+                            $result.OUDetails = "CreateChild permission granted"
+                            break
+                        }
+                    }
+                }
+            }
+            if (-not $result.CanMoveToOU) {
+                $result.OUDetails = "Missing CreateChild permission on target OU"
+            }
+        }
+        catch {
+            $result.OUDetails = "Unable to read ACL on target OU: $_"
+        }
+    }
+    catch {
+        $result.UserDetails = "Error checking permissions: $_"
+        $result.OUDetails = "Error checking permissions: $_"
+    }
+
+    return $result
 }
 
 # ============================================================================
@@ -462,6 +575,62 @@ $accounts = Get-Content -Path $InputFile | Where-Object { $_.Trim() -ne '' }
 if ($accounts.Count -eq 0) {
     Write-Warning "No accounts found in input file."
     exit 0
+}
+
+# Handle TestPermissions mode
+if ($TestPermissions) {
+    Write-Host "`n========================================" -ForegroundColor Cyan
+    Write-Host "  Permission Test Results" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+
+    # Get first account from input file
+    $sampleAccount = $accounts[0].Trim()
+    try {
+        $sampleUser = Get-ADUser -Identity $sampleAccount -ErrorAction Stop
+    }
+    catch {
+        Write-Host "Sample Account: $sampleAccount" -ForegroundColor Red
+        Write-Host "Target OU:      $TargetOU"
+        Write-Host ""
+        Write-Host "[FAIL] Cannot retrieve sample account: $_" -ForegroundColor Red
+        Write-Host ""
+        Write-Host "Permission check failed. Cannot proceed with account processing." -ForegroundColor Red
+        Write-Host "========================================`n"
+        exit 1
+    }
+
+    Write-Host "Sample Account: $sampleAccount"
+    Write-Host "Target OU:      $TargetOU"
+    Write-Host ""
+
+    # Run permission test
+    $permResult = Test-ADWritePermission -UserDN $sampleUser.DistinguishedName -TargetOU $TargetOU
+
+    # Display results
+    if ($permResult.CanModifyUser) {
+        Write-Host "[PASS] Modify user account" -ForegroundColor Green
+    } else {
+        Write-Host "[FAIL] Modify user account" -ForegroundColor Red
+        Write-Host "       $($permResult.UserDetails)" -ForegroundColor Gray
+    }
+
+    if ($permResult.CanMoveToOU) {
+        Write-Host "[PASS] Move to target OU" -ForegroundColor Green
+    } else {
+        Write-Host "[FAIL] Move to target OU" -ForegroundColor Red
+        Write-Host "       $($permResult.OUDetails)" -ForegroundColor Gray
+    }
+
+    Write-Host ""
+    if ($permResult.CanModifyUser -and $permResult.CanMoveToOU) {
+        Write-Host "All permission checks passed." -ForegroundColor Green
+        Write-Host "========================================`n"
+        exit 0
+    } else {
+        Write-Host "Permission check failed. Cannot proceed with account processing." -ForegroundColor Red
+        Write-Host "========================================`n"
+        exit 1
+    }
 }
 
 # Circuit breaker: Force dry run if over limit (unless -Force specified)

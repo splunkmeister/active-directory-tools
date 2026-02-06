@@ -1010,3 +1010,274 @@ function Test-DomainControllerHealth {
         }
     }
 }
+
+Describe "TestPermissions Mode" {
+    BeforeAll {
+        $script:PermTestInputFile = Join-Path -Path $script:TestDir -ChildPath "perm_test_accounts.txt"
+        $script:PermTestReportPath = Join-Path -Path $script:TestDir -ChildPath "perm_test_report.csv"
+
+        # Create input file with test account
+        @("testuser") | Set-Content -Path $script:PermTestInputFile
+    }
+
+    Describe "Test-ADWritePermission Function" {
+        BeforeAll {
+            # Define the function for isolated testing
+            $functionDef = @'
+function Test-ADWritePermission {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$UserDN,
+        [Parameter(Mandatory = $true)]
+        [string]$TargetOU
+    )
+
+    $result = [PSCustomObject]@{
+        CanModifyUser = $false
+        CanMoveToOU   = $false
+        UserDetails   = $null
+        OUDetails     = $null
+    }
+
+    try {
+        $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        $userSids = @($currentIdentity.User)
+        $userSids += $currentIdentity.Groups | ForEach-Object { $_ }
+
+        try {
+            $userAcl = Get-Acl -Path "AD:\$UserDN" -ErrorAction Stop
+            foreach ($ace in $userAcl.Access) {
+                $aceSid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier])
+                if ($userSids -contains $aceSid) {
+                    if ($ace.AccessControlType -eq 'Allow') {
+                        if ($ace.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::GenericAll) {
+                            $result.CanModifyUser = $true
+                            $result.UserDetails = "GenericAll permission granted"
+                            break
+                        }
+                        if ($ace.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::WriteProperty) {
+                            $result.CanModifyUser = $true
+                            $result.UserDetails = "WriteProperty permission granted"
+                            break
+                        }
+                    }
+                }
+            }
+            if (-not $result.CanModifyUser) {
+                $result.UserDetails = "Missing WriteProperty permission on user object"
+            }
+        }
+        catch {
+            $result.UserDetails = "Unable to read ACL on user object: $_"
+        }
+
+        try {
+            $ouAcl = Get-Acl -Path "AD:\$TargetOU" -ErrorAction Stop
+            foreach ($ace in $ouAcl.Access) {
+                $aceSid = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier])
+                if ($userSids -contains $aceSid) {
+                    if ($ace.AccessControlType -eq 'Allow') {
+                        if ($ace.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::GenericAll) {
+                            $result.CanMoveToOU = $true
+                            $result.OUDetails = "GenericAll permission granted"
+                            break
+                        }
+                        if ($ace.ActiveDirectoryRights -band [System.DirectoryServices.ActiveDirectoryRights]::CreateChild) {
+                            $result.CanMoveToOU = $true
+                            $result.OUDetails = "CreateChild permission granted"
+                            break
+                        }
+                    }
+                }
+            }
+            if (-not $result.CanMoveToOU) {
+                $result.OUDetails = "Missing CreateChild permission on target OU"
+            }
+        }
+        catch {
+            $result.OUDetails = "Unable to read ACL on target OU: $_"
+        }
+    }
+    catch {
+        $result.UserDetails = "Error checking permissions: $_"
+        $result.OUDetails = "Error checking permissions: $_"
+    }
+
+    return $result
+}
+'@
+            Invoke-Expression $functionDef
+        }
+
+        Context "When user has full permissions" {
+            BeforeAll {
+                # Mock Get-Acl to return ACEs with GenericAll
+                Mock Get-Acl {
+                    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+                    $mockAce = New-Object PSObject -Property @{
+                        IdentityReference = $currentUser.User
+                        AccessControlType = 'Allow'
+                        ActiveDirectoryRights = [System.DirectoryServices.ActiveDirectoryRights]::GenericAll
+                    }
+                    # Add Translate method to IdentityReference
+                    Add-Member -InputObject $mockAce.IdentityReference -MemberType ScriptMethod -Name "Translate" -Value {
+                        param($type)
+                        return [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+                    } -Force
+
+                    $mockAcl = New-Object PSObject -Property @{
+                        Access = @($mockAce)
+                    }
+                    return $mockAcl
+                }
+            }
+
+            It "Should return CanModifyUser as true" {
+                $result = Test-ADWritePermission -UserDN "CN=testuser,OU=Users,DC=contoso,DC=com" -TargetOU "OU=Disabled,DC=contoso,DC=com"
+                $result.CanModifyUser | Should -BeTrue
+            }
+
+            It "Should return CanMoveToOU as true" {
+                $result = Test-ADWritePermission -UserDN "CN=testuser,OU=Users,DC=contoso,DC=com" -TargetOU "OU=Disabled,DC=contoso,DC=com"
+                $result.CanMoveToOU | Should -BeTrue
+            }
+        }
+
+        Context "When ACL read fails" {
+            BeforeAll {
+                Mock Get-Acl { throw "Access denied" }
+            }
+
+            It "Should return CanModifyUser as false with error details" {
+                $result = Test-ADWritePermission -UserDN "CN=testuser,OU=Users,DC=contoso,DC=com" -TargetOU "OU=Disabled,DC=contoso,DC=com"
+                $result.CanModifyUser | Should -BeFalse
+                $result.UserDetails | Should -Match "Unable to read ACL"
+            }
+
+            It "Should return CanMoveToOU as false with error details" {
+                $result = Test-ADWritePermission -UserDN "CN=testuser,OU=Users,DC=contoso,DC=com" -TargetOU "OU=Disabled,DC=contoso,DC=com"
+                $result.CanMoveToOU | Should -BeFalse
+                $result.OUDetails | Should -Match "Unable to read ACL"
+            }
+        }
+    }
+
+    Context "TestPermissions integration tests" {
+        BeforeAll {
+            Mock Get-ADDomainController { return @{ Name = "DC01" } }
+            Mock Get-ADOrganizationalUnit { return $true }
+        }
+
+        It "Should exit after permission test (not process accounts)" {
+            Mock Get-ADUser {
+                param($Identity)
+                [PSCustomObject]@{
+                    SamAccountName    = $Identity
+                    DistinguishedName = "CN=$Identity,OU=Users,DC=contoso,DC=com"
+                }
+            }
+            Mock Get-Acl { throw "Access denied" }
+            Mock Disable-ADAccount { }
+            Mock Move-ADObject { }
+
+            & $ScriptPath `
+                -InputFile $script:PermTestInputFile `
+                -DormantDays 90 `
+                -TargetOU $script:TestTargetOU `
+                -TestPermissions 2>&1 | Out-Null
+
+            # Disable-ADAccount should never be called in TestPermissions mode
+            Should -Invoke Disable-ADAccount -Times 0
+        }
+
+        It "Should display Permission Test Results header" {
+            Mock Get-ADUser {
+                param($Identity)
+                [PSCustomObject]@{
+                    SamAccountName    = $Identity
+                    DistinguishedName = "CN=$Identity,OU=Users,DC=contoso,DC=com"
+                }
+            }
+            Mock Get-Acl { throw "Access denied" }
+
+            $result = & $ScriptPath `
+                -InputFile $script:PermTestInputFile `
+                -DormantDays 90 `
+                -TargetOU $script:TestTargetOU `
+                -TestPermissions 2>&1 | Out-String
+
+            $result | Should -Match "Permission Test Results"
+        }
+
+        It "Should show sample account in output" {
+            Mock Get-ADUser {
+                param($Identity)
+                [PSCustomObject]@{
+                    SamAccountName    = $Identity
+                    DistinguishedName = "CN=$Identity,OU=Users,DC=contoso,DC=com"
+                }
+            }
+            Mock Get-Acl { throw "Access denied" }
+
+            $result = & $ScriptPath `
+                -InputFile $script:PermTestInputFile `
+                -DormantDays 90 `
+                -TargetOU $script:TestTargetOU `
+                -TestPermissions 2>&1 | Out-String
+
+            $result | Should -Match "Sample Account:"
+        }
+
+        It "Should exit with code 1 when permissions are missing" {
+            Mock Get-ADUser {
+                param($Identity)
+                [PSCustomObject]@{
+                    SamAccountName    = $Identity
+                    DistinguishedName = "CN=$Identity,OU=Users,DC=contoso,DC=com"
+                }
+            }
+            Mock Get-Acl { throw "Access denied" }
+
+            & $ScriptPath `
+                -InputFile $script:PermTestInputFile `
+                -DormantDays 90 `
+                -TargetOU $script:TestTargetOU `
+                -TestPermissions 2>&1 | Out-Null
+
+            $LASTEXITCODE | Should -Be 1
+        }
+
+        It "Should exit with error when sample account cannot be retrieved" {
+            Mock Get-ADUser {
+                throw "Account not found"
+            }
+
+            $result = & $ScriptPath `
+                -InputFile $script:PermTestInputFile `
+                -DormantDays 90 `
+                -TargetOU $script:TestTargetOU `
+                -TestPermissions 2>&1 | Out-String
+
+            $result | Should -Match "Cannot retrieve sample account"
+            $LASTEXITCODE | Should -Be 1
+        }
+    }
+
+    Context "TestPermissions requires Default parameter set" {
+        It "Should require InputFile parameter" {
+            { & $ScriptPath -TestPermissions -DormantDays 90 -TargetOU $script:TestTargetOU -ErrorAction Stop } |
+                Should -Throw
+        }
+
+        It "Should require TargetOU parameter" {
+            { & $ScriptPath -TestPermissions -InputFile $script:PermTestInputFile -DormantDays 90 -ErrorAction Stop } |
+                Should -Throw
+        }
+
+        It "Should not be available with Rollback parameter set" {
+            # TestPermissions is only in Default parameter set, so it can't be combined with Rollback
+            $scriptContent = Get-Content -Path $ScriptPath -Raw
+            $scriptContent | Should -Match "ParameterSetName = 'Default'\]\s*\[switch\]\`$TestPermissions"
+        }
+    }
+}

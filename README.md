@@ -59,6 +59,7 @@ Processes a list of accounts, validates dormancy, and disables/moves confirmed d
 | `-MaxAccounts` | No | 50 | Max accounts before requiring `-Force` |
 | `-MaxConsecutiveFailures` | No | 5 | Stop after N consecutive failures |
 | `-Force` | No | - | Override MaxAccounts limit |
+| `-TestPermissions` | No | - | Test AD permissions and exit |
 | `-WhatIf` | No | - | Preview without changes |
 
 \* Required for default mode | \** Required for rollback mode
@@ -77,6 +78,9 @@ Processes a list of accounts, validates dormancy, and disables/moves confirmed d
 
 # Large batch
 .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -Force
+
+# Test permissions before processing
+.\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -TestPermissions
 ```
 
 ## Workflow Example
