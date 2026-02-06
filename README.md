@@ -119,6 +119,6 @@ Invoke-Pester -Path ./Tests/
 Simple text file with one account name per line:
 ```
 jsmith
-mjohnson
+qibrahim
 agarcia
 ```
