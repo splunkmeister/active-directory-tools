@@ -201,11 +201,15 @@ foreach ($account in $allAccounts) {
             $dormantCount++
         }
     } else {
-        # Account has never logged in
-        $neverLoggedInCount++
-        if ($IncludeNeverLoggedIn) {
-            $isDormant = $true
+        # Account has never logged in - only flag if created before threshold
+        $createdDate = $account.whenCreated
+        if ($createdDate -and $createdDate -lt $thresholdDate) {
+            $neverLoggedInCount++
+            if ($IncludeNeverLoggedIn) {
+                $isDormant = $true
+            }
         }
+        # Skip accounts created within dormancy period - too new to evaluate
     }
 
     if ($isDormant) {
@@ -230,7 +234,7 @@ if ($results.Count -eq 0) {
     Write-Host "No dormant accounts found matching criteria." -ForegroundColor Green
 } else {
     # Display table to console
-    $results | Format-Table -Property SamAccountName, DisplayName, LastLogonDate, DaysInactive -AutoSize
+    $results | Format-Table -Property SamAccountName, DisplayName, @{Name='Description'; Expression={if ($_.Description -and $_.Description.Length -gt 50) { $_.Description.Substring(0,47) + '...' } else { $_.Description }}}, LastLogonDate, DaysInactive -AutoSize
 
     # Color-coded summary
     foreach ($result in $results) {

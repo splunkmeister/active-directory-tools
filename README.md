@@ -27,7 +27,7 @@ Queries AD for dormant user accounts based on `lastLogonTimestamp`. Generates re
 | `-DormantDays` | Yes | - | Days of inactivity threshold |
 | `-OutputFile` | No | - | Path to generate target file (SamAccountNames only) |
 | `-ReportPath` | No | Auto | Path for full CSV report |
-| `-IncludeNeverLoggedIn` | No | $false | Include accounts that never logged in |
+| `-IncludeNeverLoggedIn` | No | $false | Include accounts that never logged in (excludes accounts created within dormancy period) |
 
 ### Usage
 
