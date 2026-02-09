@@ -39,11 +39,20 @@
     Test if the current user has sufficient AD permissions to disable accounts and move them
     to the target OU. Validates permissions using a sample account from the input file and exits.
 
+.PARAMETER MoveDisabledOnly
+    Switch to enable move-disabled mode. Finds already-disabled accounts in SearchBase and moves them to TargetOU.
+
+.PARAMETER SearchBase
+    Distinguished Name of the OU to search for disabled accounts (used with -MoveDisabledOnly).
+
 .PARAMETER Help
     Display help information.
 
 .PARAMETER WhatIf
     Preview actions without making changes.
+
+.EXAMPLE
+    .\Disable-DormantADAccounts.ps1 -MoveDisabledOnly -SearchBase "OU=Users,DC=adkfoo,DC=com" -TargetOU "OU=Disabled,DC=adkfoo,DC=com" -WhatIf
 
 .EXAMPLE
     .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=adkfoo,DC=com" -WhatIf
@@ -75,6 +84,7 @@ param(
     [int]$DormantDays,
 
     [Parameter(Mandatory = $true, ParameterSetName = 'Default')]
+    [Parameter(Mandatory = $true, ParameterSetName = 'MoveDisabled')]
     [ValidateNotNullOrEmpty()]
     [string]$TargetOU,
 
@@ -87,6 +97,13 @@ param(
     [Parameter(Mandatory = $true, ParameterSetName = 'Rollback')]
     [ValidateNotNullOrEmpty()]
     [string]$RollbackFile,
+
+    [Parameter(Mandatory = $true, ParameterSetName = 'MoveDisabled')]
+    [switch]$MoveDisabledOnly,
+
+    [Parameter(Mandatory = $true, ParameterSetName = 'MoveDisabled')]
+    [ValidateNotNullOrEmpty()]
+    [string]$SearchBase,
 
     # Circuit breaker: max accounts before forcing dry run
     [Parameter(Mandatory = $false)]
@@ -134,6 +151,8 @@ PARAMETERS
     -ReportPath <string>       Path for CSV report output (optional)
     -Rollback                  Enable rollback mode
     -RollbackFile <string>     Path to previous run's CSV report for rollback
+    -MoveDisabledOnly          Move already-disabled accounts from SearchBase to TargetOU
+    -SearchBase <string>       OU to search for disabled accounts (with -MoveDisabledOnly)
     -MaxAccounts <int>         Max accounts before requiring -Force (default: 50)
     -MaxConsecutiveFailures    Stop after N consecutive failures (default: 5)
     -Force                     Override MaxAccounts safety limit
@@ -156,6 +175,9 @@ EXAMPLES
 
     # Test permissions before processing
     .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -TestPermissions
+
+    # Move already-disabled accounts to target OU
+    .\Disable-DormantADAccounts.ps1 -MoveDisabledOnly -SearchBase "OU=Users,DC=contoso,DC=com" -TargetOU "OU=Disabled,DC=contoso,DC=com"
 
 CIRCUIT BREAKERS
     - DC Health Check: Verifies AD connectivity before processing
@@ -534,6 +556,157 @@ if ($Rollback) {
     Write-Host "Errors:                      $($counters.Errors)" -ForegroundColor Magenta
     Write-Host "----------------------------------------"
     Write-Host "Total processed:             $($results.Count) of $($eligibleAccounts.Count)"
+    Write-Host "Report saved to:             $ReportPath"
+    Write-Host "========================================`n"
+
+    if ($abortedEarly) { exit 1 }
+    exit 0
+}
+
+# Handle MoveDisabledOnly mode
+if ($MoveDisabledOnly) {
+    # Set default report path for move-disabled if not provided
+    if (-not $ReportPath) {
+        $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+        $ReportPath = Join-Path -Path (Get-Location) -ChildPath "MoveDisabledReport_$timestamp.csv"
+    }
+
+    # Circuit breaker: DC health check
+    Write-Host "Checking domain controller connectivity..." -ForegroundColor Cyan
+    if (-not (Test-DomainControllerHealth)) {
+        Write-Error "Cannot connect to Active Directory. Please verify network connectivity and domain controller availability."
+        exit 1
+    }
+    Write-Host "Domain controller connection verified." -ForegroundColor Green
+
+    # Validate SearchBase OU exists
+    try {
+        $null = Get-ADOrganizationalUnit -Identity $SearchBase -ErrorAction Stop
+    } catch {
+        Write-Error "SearchBase OU not found or inaccessible: $SearchBase"
+        exit 1
+    }
+
+    # Validate TargetOU exists
+    try {
+        $null = Get-ADOrganizationalUnit -Identity $TargetOU -ErrorAction Stop
+    } catch {
+        Write-Error "Target OU not found or inaccessible: $TargetOU"
+        exit 1
+    }
+
+    # Query for disabled accounts in SearchBase
+    Write-Host "Querying for disabled accounts in SearchBase..." -ForegroundColor Cyan
+    try {
+        $disabledAccounts = Get-ADUser -SearchBase $SearchBase -Filter { Enabled -eq $false } `
+            -Properties DisplayName, Description, DistinguishedName -ErrorAction Stop
+    } catch {
+        Write-Error "Failed to query Active Directory: $_"
+        exit 1
+    }
+
+    if ($disabledAccounts.Count -eq 0) {
+        Write-Host "No disabled accounts found in SearchBase." -ForegroundColor Green
+        exit 0
+    }
+
+    # Circuit breaker: Force dry run if over limit (unless -Force specified)
+    $forcedWhatIf = $false
+    if ($disabledAccounts.Count -gt $MaxAccounts -and -not $Force -and -not $WhatIfPreference) {
+        Write-Warning "Account count ($($disabledAccounts.Count)) exceeds MaxAccounts limit ($MaxAccounts). Forcing WhatIf mode."
+        Write-Warning "Use -Force to override this safety limit."
+        $forcedWhatIf = $true
+    }
+
+    # Determine effective WhatIf mode
+    $effectiveWhatIf = $WhatIfPreference -or $forcedWhatIf
+
+    Write-Host "`n========================================" -ForegroundColor Cyan
+    Write-Host "  Move Disabled Accounts" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "Search Base:   $SearchBase"
+    Write-Host "Target OU:     $TargetOU"
+    Write-Host "Report Path:   $ReportPath"
+    Write-Host "Mode:          $(if ($effectiveWhatIf) { 'WhatIf (Preview)' } else { 'Execute' })"
+    if ($forcedWhatIf) {
+        Write-Host "               (Forced due to MaxAccounts limit)" -ForegroundColor Yellow
+    }
+    Write-Host "Accounts:      $($disabledAccounts.Count)"
+    Write-Host "Max Failures:  $MaxConsecutiveFailures consecutive"
+    Write-Host "========================================`n"
+
+    $results = @()
+    $counters = @{
+        Moved    = 0
+        Errors   = 0
+        WhatIf   = 0
+    }
+    $consecutiveFailures = 0
+    $abortedEarly = $false
+
+    foreach ($account in $disabledAccounts) {
+        # Extract current OU from DistinguishedName
+        $dnParts = $account.DistinguishedName -split ',', 2
+        $currentOU = if ($dnParts.Count -gt 1) { $dnParts[1] } else { $account.DistinguishedName }
+
+        $resultEntry = [PSCustomObject]@{
+            SamAccountName = $account.SamAccountName
+            DisplayName    = $account.DisplayName
+            Description    = $account.Description
+            OriginalOU     = $currentOU
+            NewOU          = $TargetOU
+            Action         = $null
+            Timestamp      = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        }
+
+        if ($effectiveWhatIf) {
+            $counters.WhatIf++
+            $consecutiveFailures = 0
+            $resultEntry.Action = "WHATIF"
+            Write-Host "[WHATIF]    $($account.SamAccountName) - Would move to $TargetOU" -ForegroundColor Yellow
+        } else {
+            try {
+                Move-ADObject -Identity $account.DistinguishedName -TargetPath $TargetOU -ErrorAction Stop
+                $counters.Moved++
+                $consecutiveFailures = 0
+                $resultEntry.Action = "MOVED"
+                Write-Host "[MOVED]     $($account.SamAccountName) - Moved to $TargetOU" -ForegroundColor Green
+            } catch {
+                $counters.Errors++
+                $consecutiveFailures++
+                $resultEntry.Action = "ERROR: $_"
+                Write-Host "[ERROR]     $($account.SamAccountName) - Failed to move: $_" -ForegroundColor Magenta
+            }
+        }
+
+        $results += $resultEntry
+
+        # Circuit breaker: Check consecutive failures
+        if ($consecutiveFailures -ge $MaxConsecutiveFailures) {
+            Write-Error "Circuit breaker triggered: $MaxConsecutiveFailures consecutive failures. Aborting."
+            $abortedEarly = $true
+            break
+        }
+    }
+
+    # Export report
+    $results | Export-Csv -Path $ReportPath -NoTypeInformation -Encoding UTF8
+
+    # Summary
+    Write-Host "`n========================================" -ForegroundColor Cyan
+    Write-Host "         Move Disabled Summary" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+    if ($abortedEarly) {
+        Write-Host "STATUS: ABORTED (consecutive failure limit)" -ForegroundColor Red
+    }
+    if ($effectiveWhatIf) {
+        Write-Host "Would move:                  $($counters.WhatIf)" -ForegroundColor Yellow
+    } else {
+        Write-Host "Moved:                       $($counters.Moved)" -ForegroundColor Green
+    }
+    Write-Host "Errors:                      $($counters.Errors)" -ForegroundColor Magenta
+    Write-Host "----------------------------------------"
+    Write-Host "Total processed:             $($results.Count) of $($disabledAccounts.Count)"
     Write-Host "Report saved to:             $ReportPath"
     Write-Host "========================================`n"
 

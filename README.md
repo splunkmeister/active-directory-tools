@@ -56,13 +56,15 @@ Processes a list of accounts, validates dormancy, and disables/moves confirmed d
 | `-ReportPath` | No | Auto | Path for CSV report |
 | `-Rollback` | Yes** | - | Enable rollback mode |
 | `-RollbackFile` | Yes** | - | Previous run's CSV report for rollback |
+| `-MoveDisabledOnly` | Yes*** | - | Move already-disabled accounts to TargetOU |
+| `-SearchBase` | Yes*** | - | OU to search for disabled accounts |
 | `-MaxAccounts` | No | 50 | Max accounts before requiring `-Force` |
 | `-MaxConsecutiveFailures` | No | 5 | Stop after N consecutive failures |
 | `-Force` | No | - | Override MaxAccounts limit |
 | `-TestPermissions` | No | - | Test AD permissions and exit |
 | `-WhatIf` | No | - | Preview without changes |
 
-\* Required for default mode | \** Required for rollback mode
+\* Required for default mode | \** Required for rollback mode | \*** Required for move-disabled mode
 
 ### Usage
 
@@ -81,6 +83,9 @@ Processes a list of accounts, validates dormancy, and disables/moves confirmed d
 
 # Test permissions before processing
 .\Disable-DormantADAccounts.ps1 -InputFile "accounts.txt" -DormantDays 90 -TargetOU "OU=Disabled,DC=contoso,DC=com" -TestPermissions
+
+# Move already-disabled accounts from source OU to disabled OU
+.\Disable-DormantADAccounts.ps1 -MoveDisabledOnly -SearchBase "OU=Users,DC=contoso,DC=com" -TargetOU "OU=Disabled,DC=contoso,DC=com" -WhatIf
 ```
 
 ## Workflow Example
